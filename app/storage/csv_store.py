@@ -17,6 +17,9 @@ from app.schemas import (
     Portfolio,
     PortfolioCreate,
     PortfolioUpdate,
+    Prompt,
+    PromptCreate,
+    PromptUpdate,
     User,
     UserCreate,
 )
@@ -37,6 +40,7 @@ class CsvStore:
         self.latest_prices_path = self.data_dir / "latest_prices.csv"
         self.earnings_events_path = self.data_dir / "earnings_events.csv"
         self.news_headlines_path = self.data_dir / "news_headlines.csv"
+        self.prompts_path = self.data_dir / "prompts.csv"
 
         self._ensure_files()
 
@@ -48,9 +52,11 @@ class CsvStore:
                 "user_id",
                 "name",
                 "portfolio_type",
+                "description",
                 "base_currency",
                 "monthly_budget",
                 "target_weight",
+                "created_at",
             ],
             self.holdings_path: [
                 "id",
@@ -75,16 +81,34 @@ class CsvStore:
                 "published_at",
                 "source",
             ],
+            self.prompts_path: ["id", "user_id", "title", "content", "portfolio_id", "created_at", "updated_at"],
         }
 
         for path, fieldnames in specs.items():
-            if not path.exists():
-                self._write_rows(path, fieldnames, [])
+            self._ensure_file_schema(path, fieldnames)
 
         if not self.read_users():
             self.seed_defaults()
 
+    def _ensure_file_schema(self, path: Path, fieldnames: list[str]) -> None:
+        if not path.exists():
+            self._write_rows(path, fieldnames, [])
+            return
+
+        rows = self._read_rows(path)
+        needs_rewrite = False
+        normalized_rows: list[dict[str, str]] = []
+        for row in rows:
+            normalized = {field: row.get(field, "") for field in fieldnames}
+            if any(field not in row for field in fieldnames) or any(key not in fieldnames for key in row):
+                needs_rewrite = True
+            normalized_rows.append(normalized)
+
+        if needs_rewrite:
+            self._write_rows(path, fieldnames, normalized_rows)
+
     def seed_defaults(self) -> None:
+        now = datetime.now(UTC).replace(microsecond=0).isoformat()
         self._write_rows(
             self.users_path,
             ["id", "name", "birth_date", "email"],
@@ -92,25 +116,39 @@ class CsvStore:
         )
         self._write_rows(
             self.portfolios_path,
-            ["id", "user_id", "name", "portfolio_type", "base_currency", "monthly_budget", "target_weight"],
+            [
+                "id",
+                "user_id",
+                "name",
+                "portfolio_type",
+                "description",
+                "base_currency",
+                "monthly_budget",
+                "target_weight",
+                "created_at",
+            ],
             [
                 {
                     "id": "1",
                     "user_id": "1",
                     "name": "Dividend Portfolio",
                     "portfolio_type": "dividend",
+                    "description": "Income-focused starter portfolio",
                     "base_currency": "KRW",
                     "monthly_budget": "1000000",
                     "target_weight": "50",
+                    "created_at": now,
                 },
                 {
                     "id": "2",
                     "user_id": "1",
                     "name": "General Portfolio",
                     "portfolio_type": "general",
+                    "description": "Growth-oriented starter portfolio",
                     "base_currency": "KRW",
                     "monthly_budget": "1000000",
                     "target_weight": "50",
+                    "created_at": now,
                 },
             ],
         )
@@ -157,12 +195,7 @@ class CsvStore:
         }
         rows.append(row)
         self._write_rows(self.users_path, ["id", "name", "birth_date", "email"], rows)
-        return User(
-            id=next_id,
-            name=payload.name,
-            birth_date=payload.birth_date,
-            email=payload.email,
-        )
+        return User(id=next_id, name=payload.name, birth_date=payload.birth_date, email=payload.email)
 
     def find_user_by_profile(self, name: str, birth_date: str) -> User | None:
         normalized_name = name.strip().lower()
@@ -179,9 +212,11 @@ class CsvStore:
                 user_id=int(row["user_id"]),
                 name=row["name"],
                 portfolio_type=row["portfolio_type"],
+                description=row.get("description") or None,
                 base_currency=row.get("base_currency") or "KRW",
                 monthly_budget=Decimal(row["monthly_budget"]) if row.get("monthly_budget") else None,
                 target_weight=Decimal(row["target_weight"]) if row.get("target_weight") else None,
+                created_at=datetime.fromisoformat(row["created_at"]) if row.get("created_at") else None,
             )
             for row in rows
         ]
@@ -189,22 +224,41 @@ class CsvStore:
             portfolios = [portfolio for portfolio in portfolios if portfolio.user_id == user_id]
         return portfolios
 
+    def get_portfolio(self, user_id: int, portfolio_id: int) -> Portfolio | None:
+        for portfolio in self.read_portfolios(user_id=user_id):
+            if portfolio.id == portfolio_id:
+                return portfolio
+        return None
+
     def create_portfolio(self, user_id: int, payload: PortfolioCreate) -> Portfolio:
         rows = self._read_rows(self.portfolios_path)
         next_id = max((int(row["id"]) for row in rows), default=0) + 1
+        now = datetime.now(UTC).replace(microsecond=0)
         row = {
             "id": str(next_id),
             "user_id": str(user_id),
             "name": payload.name,
             "portfolio_type": payload.portfolio_type.value,
+            "description": payload.description or "",
             "base_currency": payload.base_currency.upper(),
             "monthly_budget": str(payload.monthly_budget) if payload.monthly_budget is not None else "",
             "target_weight": str(payload.target_weight) if payload.target_weight is not None else "",
+            "created_at": now.isoformat(),
         }
         rows.append(row)
         self._write_rows(
             self.portfolios_path,
-            ["id", "user_id", "name", "portfolio_type", "base_currency", "monthly_budget", "target_weight"],
+            [
+                "id",
+                "user_id",
+                "name",
+                "portfolio_type",
+                "description",
+                "base_currency",
+                "monthly_budget",
+                "target_weight",
+                "created_at",
+            ],
             rows,
         )
         return Portfolio(
@@ -212,9 +266,11 @@ class CsvStore:
             user_id=user_id,
             name=payload.name,
             portfolio_type=payload.portfolio_type,
+            description=payload.description,
             base_currency=payload.base_currency.upper(),
             monthly_budget=payload.monthly_budget,
             target_weight=payload.target_weight,
+            created_at=now,
         )
 
     def update_portfolio(self, user_id: int, portfolio_id: int, payload: PortfolioUpdate) -> Portfolio | None:
@@ -225,9 +281,12 @@ class CsvStore:
             if int(row["id"]) == portfolio_id and int(row["user_id"]) == user_id:
                 row["name"] = payload.name
                 row["portfolio_type"] = payload.portfolio_type.value
+                row["description"] = payload.description or ""
                 row["base_currency"] = payload.base_currency.upper()
                 row["monthly_budget"] = str(payload.monthly_budget) if payload.monthly_budget is not None else ""
                 row["target_weight"] = str(payload.target_weight) if payload.target_weight is not None else ""
+                if not row.get("created_at"):
+                    row["created_at"] = datetime.now(UTC).replace(microsecond=0).isoformat()
                 updated_row = row
                 break
 
@@ -236,7 +295,17 @@ class CsvStore:
 
         self._write_rows(
             self.portfolios_path,
-            ["id", "user_id", "name", "portfolio_type", "base_currency", "monthly_budget", "target_weight"],
+            [
+                "id",
+                "user_id",
+                "name",
+                "portfolio_type",
+                "description",
+                "base_currency",
+                "monthly_budget",
+                "target_weight",
+                "created_at",
+            ],
             rows,
         )
         return Portfolio(
@@ -244,9 +313,11 @@ class CsvStore:
             user_id=int(updated_row["user_id"]),
             name=updated_row["name"],
             portfolio_type=updated_row["portfolio_type"],
+            description=updated_row.get("description") or None,
             base_currency=updated_row["base_currency"],
             monthly_budget=Decimal(updated_row["monthly_budget"]) if updated_row.get("monthly_budget") else None,
             target_weight=Decimal(updated_row["target_weight"]) if updated_row.get("target_weight") else None,
+            created_at=datetime.fromisoformat(updated_row["created_at"]) if updated_row.get("created_at") else None,
         )
 
     def delete_portfolio(self, user_id: int, portfolio_id: int) -> bool:
@@ -262,7 +333,17 @@ class CsvStore:
 
         self._write_rows(
             self.portfolios_path,
-            ["id", "user_id", "name", "portfolio_type", "base_currency", "monthly_budget", "target_weight"],
+            [
+                "id",
+                "user_id",
+                "name",
+                "portfolio_type",
+                "description",
+                "base_currency",
+                "monthly_budget",
+                "target_weight",
+                "created_at",
+            ],
             portfolio_rows,
         )
 
@@ -292,6 +373,7 @@ class CsvStore:
                 currency=row["currency"],
                 quantity=Decimal(row["quantity"]),
                 avg_price=Decimal(row["avg_price"]),
+                current_price=None,
                 created_at=datetime.fromisoformat(row["created_at"]),
             )
             for row in rows
@@ -331,7 +413,7 @@ class CsvStore:
             ["id", "user_id", "portfolio_id", "symbol", "name", "market", "currency", "quantity", "avg_price", "created_at"],
             rows,
         )
-        return Holding(
+        holding = Holding(
             id=next_id,
             user_id=user_id,
             portfolio_id=payload.portfolio_id,
@@ -341,8 +423,20 @@ class CsvStore:
             currency=payload.currency.upper(),
             quantity=payload.quantity,
             avg_price=payload.avg_price,
+            current_price=payload.current_price,
             created_at=now,
         )
+        if payload.current_price is not None:
+            self.replace_latest_price(
+                LatestPrice(
+                    symbol=holding.symbol,
+                    market=holding.market,
+                    price=payload.current_price,
+                    currency=holding.currency,
+                    as_of=now,
+                )
+            )
+        return holding
 
     def update_holding(self, user_id: int, holding_id: int, payload: HoldingUpdate) -> Holding | None:
         rows = self._read_rows(self.holdings_path)
@@ -368,8 +462,7 @@ class CsvStore:
             ["id", "user_id", "portfolio_id", "symbol", "name", "market", "currency", "quantity", "avg_price", "created_at"],
             rows,
         )
-
-        return Holding(
+        holding = Holding(
             id=int(updated_row["id"]),
             user_id=int(updated_row["user_id"]),
             portfolio_id=int(updated_row["portfolio_id"]),
@@ -379,17 +472,25 @@ class CsvStore:
             currency=updated_row["currency"],
             quantity=Decimal(updated_row["quantity"]),
             avg_price=Decimal(updated_row["avg_price"]),
+            current_price=payload.current_price,
             created_at=datetime.fromisoformat(updated_row["created_at"]),
         )
+        if payload.current_price is not None:
+            self.replace_latest_price(
+                LatestPrice(
+                    symbol=holding.symbol,
+                    market=holding.market,
+                    price=payload.current_price,
+                    currency=holding.currency,
+                    as_of=datetime.now(UTC).replace(microsecond=0),
+                )
+            )
+        return holding
 
     def delete_holding(self, user_id: int, holding_id: int) -> bool:
         rows = self._read_rows(self.holdings_path)
         original_count = len(rows)
-        rows = [
-            row
-            for row in rows
-            if not (int(row["id"]) == holding_id and int(row["user_id"]) == user_id)
-        ]
+        rows = [row for row in rows if not (int(row["id"]) == holding_id and int(row["user_id"]) == user_id)]
         if len(rows) == original_count:
             return False
 
@@ -515,3 +616,95 @@ class CsvStore:
             ["id", "symbol", "market", "headline", "url", "published_at", "source"],
             rows,
         )
+
+    def read_prompts(self, user_id: int | None = None) -> list[Prompt]:
+        rows = self._read_rows(self.prompts_path)
+        prompts = [
+            Prompt(
+                id=int(row["id"]),
+                user_id=int(row["user_id"]),
+                title=row["title"],
+                content=row["content"],
+                portfolio_id=int(row["portfolio_id"]) if row.get("portfolio_id") else None,
+                created_at=datetime.fromisoformat(row["created_at"]),
+                updated_at=datetime.fromisoformat(row["updated_at"]),
+            )
+            for row in rows
+        ]
+        if user_id is not None:
+            prompts = [prompt for prompt in prompts if prompt.user_id == user_id]
+        return sorted(prompts, key=lambda item: item.updated_at, reverse=True)
+
+    def create_prompt(self, user_id: int, payload: PromptCreate) -> Prompt:
+        rows = self._read_rows(self.prompts_path)
+        next_id = max((int(row["id"]) for row in rows), default=0) + 1
+        now = datetime.now(UTC).replace(microsecond=0)
+        row = {
+            "id": str(next_id),
+            "user_id": str(user_id),
+            "title": payload.title,
+            "content": payload.content,
+            "portfolio_id": str(payload.portfolio_id) if payload.portfolio_id is not None else "",
+            "created_at": now.isoformat(),
+            "updated_at": now.isoformat(),
+        }
+        rows.append(row)
+        self._write_rows(
+            self.prompts_path,
+            ["id", "user_id", "title", "content", "portfolio_id", "created_at", "updated_at"],
+            rows,
+        )
+        return Prompt(
+            id=next_id,
+            user_id=user_id,
+            title=payload.title,
+            content=payload.content,
+            portfolio_id=payload.portfolio_id,
+            created_at=now,
+            updated_at=now,
+        )
+
+    def update_prompt(self, user_id: int, prompt_id: int, payload: PromptUpdate) -> Prompt | None:
+        rows = self._read_rows(self.prompts_path)
+        updated_row: dict[str, str] | None = None
+        now = datetime.now(UTC).replace(microsecond=0)
+
+        for row in rows:
+            if int(row["id"]) == prompt_id and int(row["user_id"]) == user_id:
+                row["title"] = payload.title
+                row["content"] = payload.content
+                row["portfolio_id"] = str(payload.portfolio_id) if payload.portfolio_id is not None else ""
+                row["updated_at"] = now.isoformat()
+                updated_row = row
+                break
+
+        if updated_row is None:
+            return None
+
+        self._write_rows(
+            self.prompts_path,
+            ["id", "user_id", "title", "content", "portfolio_id", "created_at", "updated_at"],
+            rows,
+        )
+        return Prompt(
+            id=int(updated_row["id"]),
+            user_id=int(updated_row["user_id"]),
+            title=updated_row["title"],
+            content=updated_row["content"],
+            portfolio_id=int(updated_row["portfolio_id"]) if updated_row.get("portfolio_id") else None,
+            created_at=datetime.fromisoformat(updated_row["created_at"]),
+            updated_at=datetime.fromisoformat(updated_row["updated_at"]),
+        )
+
+    def delete_prompt(self, user_id: int, prompt_id: int) -> bool:
+        rows = self._read_rows(self.prompts_path)
+        original_count = len(rows)
+        rows = [row for row in rows if not (int(row["id"]) == prompt_id and int(row["user_id"]) == user_id)]
+        if len(rows) == original_count:
+            return False
+        self._write_rows(
+            self.prompts_path,
+            ["id", "user_id", "title", "content", "portfolio_id", "created_at", "updated_at"],
+            rows,
+        )
+        return True

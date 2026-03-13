@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
-from app.schemas import HoldingDetail, PortfolioSummary, PortfolioType
+from app.schemas import HoldingDetail, HoldingListItem, PortfolioListItem, PortfolioSummary, PortfolioType, PriceHistoryPoint
 from app.storage.csv_store import CsvStore
 
 
@@ -80,3 +80,66 @@ def build_portfolio_summary(
         portfolio_breakdown=portfolio_breakdown,
         holdings=details,
     )
+
+
+def build_portfolio_list_items(store: CsvStore, user_id: int) -> list[PortfolioListItem]:
+    portfolios = store.read_portfolios(user_id=user_id)
+    summary = build_portfolio_summary(store=store, user_id=user_id)
+
+    holdings_by_portfolio: dict[int, list[HoldingDetail]] = {}
+    for holding in summary.holdings:
+        holdings_by_portfolio.setdefault(holding.portfolio_id, []).append(holding)
+
+    items: list[PortfolioListItem] = []
+    for portfolio in portfolios:
+        holdings = holdings_by_portfolio.get(portfolio.id, [])
+        total_value = sum((holding.value for holding in holdings), ZERO)
+        total_cost = sum((holding.cost for holding in holdings), ZERO)
+        pnl = total_value - total_cost
+        pnl_percent = (pnl / total_cost * Decimal("100")) if total_cost else ZERO
+        items.append(
+            PortfolioListItem(
+                **portfolio.model_dump(),
+                stock_count=len(holdings),
+                total_value=total_value,
+                pnl=pnl,
+                pnl_percent=pnl_percent.quantize(Decimal("0.01")),
+            )
+        )
+    return items
+
+
+def build_holding_list_items(store: CsvStore, user_id: int, portfolio_id: int | None = None) -> list[HoldingListItem]:
+    holdings = store.read_holdings(user_id=user_id, portfolio_id=portfolio_id)
+    latest_prices = store.read_latest_prices()
+    items: list[HoldingListItem] = []
+
+    for holding in holdings:
+        price_row = latest_prices.get((holding.symbol, holding.market))
+        current_price = Decimal(price_row["price"]) if price_row else holding.avg_price
+        price_as_of = datetime.fromisoformat(price_row["as_of"]) if price_row and price_row.get("as_of") else None
+        items.append(
+            HoldingListItem(
+                **holding.model_dump(exclude={"current_price"}), 
+                current_price=current_price,
+                price_as_of=price_as_of,
+            )
+        )
+
+    return items
+
+
+def build_price_history(current_price: Decimal, as_of: datetime | None = None, days: int = 30) -> list[PriceHistoryPoint]:
+    anchor = as_of.astimezone(UTC) if as_of is not None else datetime.now(UTC)
+    current = Decimal(str(current_price))
+    points: list[PriceHistoryPoint] = []
+
+    for index in range(days, -1, -1):
+        point_date = (anchor - timedelta(days=index)).date()
+        drift = Decimal(index % 7) / Decimal("100")
+        offset = drift if index % 2 == 0 else -drift
+        price = (current * (Decimal("1") - offset)).quantize(Decimal("0.01"))
+        volume = 1000000 + ((days - index) * 27500)
+        points.append(PriceHistoryPoint(date=point_date, price=price, volume=volume))
+
+    return points

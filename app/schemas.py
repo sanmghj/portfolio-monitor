@@ -33,14 +33,17 @@ class Portfolio(BaseModel):
     user_id: int
     name: str
     portfolio_type: PortfolioType
+    description: str | None = None
     base_currency: str = "KRW"
     monthly_budget: Decimal | None = None
     target_weight: Decimal | None = None
+    created_at: datetime | None = None
 
 
 class PortfolioCreate(BaseModel):
     name: str = Field(min_length=1, max_length=128)
     portfolio_type: PortfolioType
+    description: str | None = Field(default=None, max_length=1024)
     base_currency: str = Field(default="KRW", min_length=3, max_length=8)
     monthly_budget: Decimal | None = Field(default=None, ge=0)
     target_weight: Decimal | None = Field(default=None, ge=0)
@@ -58,6 +61,7 @@ class HoldingBase(BaseModel):
     currency: str = Field(min_length=3, max_length=8)
     quantity: Decimal = Field(gt=0)
     avg_price: Decimal = Field(gt=0)
+    current_price: Decimal | None = Field(default=None, gt=0)
 
 
 class HoldingCreate(HoldingBase):
@@ -140,3 +144,42 @@ class HoldingInsights(BaseModel):
     latest_price: LatestPrice | None = None
     earnings_events: list[EarningsEvent]
     news_headlines: list[NewsHeadline]
+
+
+class HoldingListItem(Holding):
+    current_price: Decimal
+    price_as_of: datetime | None = None
+
+
+class PortfolioListItem(Portfolio):
+    stock_count: int = 0
+    total_value: Decimal = Field(default=Decimal("0"))
+    pnl: Decimal = Field(default=Decimal("0"))
+    pnl_percent: Decimal = Field(default=Decimal("0"))
+
+
+class PriceHistoryPoint(BaseModel):
+    date: date
+    price: Decimal
+    volume: int
+
+
+class PromptBase(BaseModel):
+    title: str = Field(min_length=1, max_length=256)
+    content: str = Field(min_length=1, max_length=10000)
+    portfolio_id: int | None = None
+
+
+class PromptCreate(PromptBase):
+    pass
+
+
+class PromptUpdate(PromptBase):
+    pass
+
+
+class Prompt(PromptBase):
+    id: int
+    user_id: int
+    created_at: datetime
+    updated_at: datetime
