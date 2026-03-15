@@ -1,14 +1,15 @@
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from email.utils import parsedate_to_datetime
 from urllib.parse import quote_plus
 from xml.etree import ElementTree
 
 import httpx
 
-from app.schemas import EarningsEvent, LatestPrice, NewsHeadline
+from app.schemas import EarningsEvent, LatestPrice, NewsHeadline, QuoteSnapshot
 
 
 class ProviderError(Exception):
@@ -20,6 +21,329 @@ class BaseProvider:
 
     async def fetch(self, *args, **kwargs):
         raise NotImplementedError
+
+
+class NaverQuoteProvider(BaseProvider):
+    name = "naver_mobile"
+    domestic_basic_url = "https://m.stock.naver.com/api/stock/{symbol}/basic"
+    domestic_integration_url = "https://m.stock.naver.com/api/stock/{symbol}/integration"
+    world_basic_url = "https://api.stock.naver.com/stock/{symbol}/basic"
+
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Referer": "https://m.stock.naver.com/",
+        "Accept": "application/json, text/plain, */*",
+    }
+    korean_unit_multipliers = {
+        "\uc870": Decimal("1000000000000"),
+        "\uc5b5": Decimal("100000000"),
+        "\ub9cc": Decimal("10000"),
+    }
+
+    async def fetch_quote(self, symbol: str, market: str) -> QuoteSnapshot:
+        normalized_symbol = symbol.upper().strip()
+        normalized_market = market.upper().strip()
+
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True, headers=self.headers) as client:
+            if normalized_market == "KR":
+                basic = await self._get_json(client, self.domestic_basic_url.format(symbol=normalized_symbol))
+                integration = await self._get_json(
+                    client,
+                    self.domestic_integration_url.format(symbol=normalized_symbol),
+                    required=False,
+                )
+                return self._build_domestic_quote(normalized_symbol, basic, integration or {})
+
+            basic = await self._get_json(client, self.world_basic_url.format(symbol=normalized_symbol))
+            return self._build_world_quote(normalized_symbol, normalized_market, basic)
+
+    async def _get_json(self, client: httpx.AsyncClient, url: str, required: bool = True) -> dict:
+        try:
+            response = await client.get(url)
+            response.raise_for_status()
+            payload = response.json()
+            if isinstance(payload, dict):
+                return payload
+            if required:
+                raise ProviderError(f"Unexpected payload shape from {url}")
+        except Exception as exc:  # noqa: BLE001
+            if required:
+                raise ProviderError(f"Failed to fetch quote data from {url}: {exc}") from exc
+        return {}
+
+    def _build_domestic_quote(self, symbol: str, basic: dict, integration: dict) -> QuoteSnapshot:
+        price = self._to_decimal(basic.get("closePrice"))
+        if price is None:
+            raise ProviderError(f"Domestic quote is missing closePrice for {symbol}")
+
+        quote_payload = {"basic": basic, "integration": integration}
+        return QuoteSnapshot(
+            symbol=symbol,
+            market="KR",
+            price=price,
+            currency=self._extract_currency(basic, default="KRW"),
+            as_of=self._parse_datetime(basic.get("localTradedAt")),
+            stock_name=basic.get("stockName"),
+            exchange_name=basic.get("stockExchangeName") or "KRX",
+            change=self._to_decimal(basic.get("compareToPreviousClosePrice")),
+            change_percent=self._to_decimal(basic.get("fluctuationsRatio")),
+            open_price=self._pick_decimal(
+                quote_payload,
+                ("openPrice",),
+                ("openPrice", "open"),
+                ("\uc2dc\uac00", "open"),
+            ),
+            high_price=self._pick_decimal(
+                quote_payload,
+                ("highPrice",),
+                ("highPrice", "high"),
+                ("\uace0\uac00", "high"),
+            ),
+            low_price=self._pick_decimal(
+                quote_payload,
+                ("lowPrice",),
+                ("lowPrice", "low"),
+                ("\uc800\uac00", "low"),
+            ),
+            volume=self._pick_int(
+                quote_payload,
+                ("accumulatedTradingVolume", "accumulatedVolume"),
+                ("accumulatedTradingVolume", "accumulatedVolume", "volume"),
+                ("\uac70\ub798\ub7c9", "volume"),
+            ),
+            market_cap=self._pick_decimal(
+                quote_payload,
+                ("marketValue", "marketCap"),
+                ("marketValue", "marketCap", "marketcap"),
+                ("\uc2dc\uac00\ucd1d\uc561", "\uc2dc\ucd1d", "marketcap"),
+            ),
+            fifty_two_week_high=self._pick_decimal(
+                quote_payload,
+                ("highPriceOf52Weeks",),
+                ("highPriceOf52Weeks", "fiftyTwoWeekHigh", "yearHigh"),
+                ("52\uc8fc\ucd5c\uace0", "52\uc8fc\ucd5c\uace0\uac00", "52weekhigh"),
+            ),
+            fifty_two_week_low=self._pick_decimal(
+                quote_payload,
+                ("lowPriceOf52Weeks",),
+                ("lowPriceOf52Weeks", "fiftyTwoWeekLow", "yearLow"),
+                ("52\uc8fc\ucd5c\uc800", "52\uc8fc\ucd5c\uc800\uac00", "52weeklow"),
+            ),
+            per=self._pick_decimal(
+                quote_payload,
+                ("per",),
+                ("per", "PER"),
+                ("per", "\uc8fc\uac00\uc218\uc775\ube44\uc728"),
+            ),
+            pbr=self._pick_decimal(
+                quote_payload,
+                ("pbr",),
+                ("pbr", "PBR"),
+                ("pbr", "\uc8fc\uac00\uc21c\uc790\uc0b0\ube44\uc728"),
+            ),
+            source=self.name,
+        )
+
+    def _build_world_quote(self, symbol: str, market: str, basic: dict) -> QuoteSnapshot:
+        price = self._to_decimal(basic.get("closePrice"))
+        if price is None:
+            raise ProviderError(f"World quote is missing closePrice for {symbol}")
+
+        return QuoteSnapshot(
+            symbol=symbol,
+            market=market,
+            price=price,
+            currency=self._extract_currency(basic, default="USD"),
+            as_of=self._parse_datetime(basic.get("localTradedAt")),
+            stock_name=basic.get("stockName") or basic.get("stockNameEng"),
+            exchange_name=basic.get("stockExchangeName"),
+            change=self._to_decimal(basic.get("compareToPreviousClosePrice")),
+            change_percent=self._to_decimal(basic.get("fluctuationsRatio")),
+            open_price=self._pick_decimal(basic, ("openPrice",), ("openPrice", "open"), ("\uc2dc\uac00", "open")),
+            high_price=self._pick_decimal(basic, ("highPrice",), ("highPrice", "high"), ("\uace0\uac00", "high")),
+            low_price=self._pick_decimal(basic, ("lowPrice",), ("lowPrice", "low"), ("\uc800\uac00", "low")),
+            volume=self._pick_int(
+                basic,
+                ("accumulatedTradingVolume",),
+                ("accumulatedTradingVolume", "volume"),
+                ("\uac70\ub798\ub7c9", "volume"),
+            ),
+            market_cap=self._pick_decimal(
+                basic,
+                ("marketValue", "marketCap"),
+                ("marketValue", "marketCap", "marketcap"),
+                ("\uc2dc\uac00\ucd1d\uc561", "\uc2dc\ucd1d", "marketcap"),
+            ),
+            fifty_two_week_high=self._pick_decimal(
+                basic,
+                ("highPriceOf52Weeks",),
+                ("highPriceOf52Weeks", "fiftyTwoWeekHigh", "yearHigh"),
+                ("52\uc8fc\ucd5c\uace0", "52\uc8fc\ucd5c\uace0\uac00", "52weekhigh"),
+            ),
+            fifty_two_week_low=self._pick_decimal(
+                basic,
+                ("lowPriceOf52Weeks",),
+                ("lowPriceOf52Weeks", "fiftyTwoWeekLow", "yearLow"),
+                ("52\uc8fc\ucd5c\uc800", "52\uc8fc\ucd5c\uc800\uac00", "52weeklow"),
+            ),
+            per=self._pick_decimal(basic, ("per",), ("per", "PER"), ("per", "\uc8fc\uac00\uc218\uc775\ube44\uc728")),
+            pbr=self._pick_decimal(basic, ("pbr",), ("pbr", "PBR"), ("pbr", "\uc8fc\uac00\uc21c\uc790\uc0b0\ube44\uc728")),
+            source=self.name,
+        )
+
+    def _extract_currency(self, payload: dict, default: str) -> str:
+        currency = payload.get("currencyType")
+        if isinstance(currency, dict):
+            code = currency.get("code") or currency.get("currencyCode")
+            if code:
+                return str(code).upper()
+        raw = payload.get("currency")
+        return str(raw).upper() if raw else default
+
+    def _parse_datetime(self, value: object) -> datetime:
+        if not value:
+            return datetime.now(UTC).replace(microsecond=0)
+        text = str(value).strip()
+        candidates = [text, text.replace(".", "-").replace("/", "-")]
+        for candidate in candidates:
+            try:
+                parsed = datetime.fromisoformat(candidate.replace("Z", "+00:00"))
+                return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+            except ValueError:
+                continue
+        for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S", "%Y%m%d %H:%M", "%Y%m%d%H%M%S"):
+            try:
+                return datetime.strptime(text, fmt).replace(tzinfo=UTC)
+            except ValueError:
+                continue
+        return datetime.now(UTC).replace(microsecond=0)
+
+    def _to_decimal(self, value: object) -> Decimal | None:
+        if value in (None, "", "-"):
+            return None
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, Decimal):
+            return value
+        if isinstance(value, (int, float)):
+            return Decimal(str(value))
+
+        text = str(value).strip()
+        if not text:
+            return None
+
+        unit_total = Decimal("0")
+        normalized = text.replace(",", "").replace("%", "").strip()
+        normalized = re.sub(r"\b[A-Z]{3,4}\b", "", normalized).strip()
+        normalized = normalized.replace("\ubc30", "").replace("\uc6d0", "").replace("\uc8fc", "").strip()
+
+        matched_unit = False
+        for unit, multiplier in self.korean_unit_multipliers.items():
+            for match in re.finditer(rf"([+-]?\d+(?:\.\d+)?){unit}", normalized):
+                unit_total += Decimal(match.group(1)) * multiplier
+                matched_unit = True
+            normalized = re.sub(rf"([+-]?\d+(?:\.\d+)?){unit}", "", normalized)
+
+        if matched_unit:
+            remainder = re.sub(r"[^0-9.+-]", "", normalized)
+            if remainder and remainder not in {"+", "-", ".", "+.", "-."}:
+                try:
+                    unit_total += Decimal(remainder)
+                except (InvalidOperation, ValueError):
+                    pass
+            return unit_total
+
+        cleaned = re.sub(r"[^0-9.+-]", "", normalized)
+        if not cleaned or cleaned in {"+", "-", ".", "+.", "-."}:
+            return None
+        try:
+            return Decimal(cleaned)
+        except (InvalidOperation, ValueError):
+            return None
+
+    def _to_int(self, value: object) -> int | None:
+        decimal_value = self._to_decimal(value)
+        return int(decimal_value) if decimal_value is not None else None
+
+    def _pick_decimal(
+        self,
+        payload: dict,
+        direct_keys: tuple[str, ...],
+        codes: tuple[str, ...],
+        keywords: tuple[str, ...],
+    ) -> Decimal | None:
+        for key in direct_keys:
+            if key in payload:
+                value = self._to_decimal(payload.get(key))
+                if value is not None:
+                    return value
+        found = self._search_metric_value(payload, codes, keywords)
+        return self._to_decimal(found)
+
+    def _pick_int(
+        self,
+        payload: dict,
+        direct_keys: tuple[str, ...],
+        codes: tuple[str, ...],
+        keywords: tuple[str, ...],
+    ) -> int | None:
+        for key in direct_keys:
+            if key in payload:
+                value = self._to_int(payload.get(key))
+                if value is not None:
+                    return value
+        found = self._search_metric_value(payload, codes, keywords)
+        return self._to_int(found)
+
+    def _search_metric_value(
+        self,
+        payload: object,
+        codes: tuple[str, ...],
+        keywords: tuple[str, ...],
+    ) -> object | None:
+        normalized_codes = {self._normalize_token(code) for code in codes if code}
+        normalized_keywords = tuple(self._normalize_token(keyword) for keyword in keywords if keyword)
+
+        def visit(node: object) -> object | None:
+            if isinstance(node, list):
+                for item in node:
+                    result = visit(item)
+                    if result not in (None, ""):
+                        return result
+                return None
+
+            if not isinstance(node, dict):
+                return None
+
+            label_parts = [
+                node.get("name"),
+                node.get("title"),
+                node.get("key"),
+                node.get("code"),
+                node.get("fieldName"),
+                node.get("itemCode"),
+                node.get("metricCode"),
+            ]
+            normalized_label = "".join(self._normalize_token(part) for part in label_parts if part)
+            if normalized_label and normalized_label in normalized_codes:
+                for value_key in ("value", "valueText", "formattedValue", "closePrice", "valueDesc"):
+                    if value_key in node and node.get(value_key) not in (None, ""):
+                        return node.get(value_key)
+            if normalized_label and any(keyword in normalized_label for keyword in normalized_keywords):
+                for value_key in ("value", "valueText", "formattedValue", "closePrice", "valueDesc"):
+                    if value_key in node and node.get(value_key) not in (None, ""):
+                        return node.get(value_key)
+
+            for value in node.values():
+                result = visit(value)
+                if result not in (None, ""):
+                    return result
+            return None
+
+        return visit(payload)
+
+    def _normalize_token(self, value: object) -> str:
+        return str(value).lower().replace(" ", "").replace("_", "").replace("-", "")
 
 
 class YahooFinanceProvider(BaseProvider):

@@ -6,6 +6,7 @@ export interface User {
 }
 
 export type PortfolioType = 'dividend' | 'general';
+export type MarketType = 'KR' | 'US';
 
 export interface Portfolio {
   id: string;
@@ -35,6 +36,28 @@ export interface Stock {
   market?: string;
   currency?: string;
   priceAsOf?: string;
+}
+
+export interface QuoteSnapshot {
+  symbol: string;
+  market: string;
+  price: number;
+  currency: string;
+  asOf: string;
+  stockName?: string;
+  exchangeName?: string;
+  change?: number;
+  changePercent?: number;
+  openPrice?: number;
+  highPrice?: number;
+  lowPrice?: number;
+  volume?: number;
+  marketCap?: number;
+  fiftyTwoWeekHigh?: number;
+  fiftyTwoWeekLow?: number;
+  per?: number;
+  pbr?: number;
+  source?: string;
 }
 
 export interface NewsItem {

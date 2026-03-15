@@ -10,6 +10,7 @@ from app.routers.dashboard import router as dashboard_router
 from app.routers.holdings import router as holdings_router
 from app.routers.portfolios import router as portfolios_router
 from app.routers.prompts import router as prompts_router
+from app.routers.quotes import router as quotes_router
 from app.routers.refresh import router as refresh_router
 from app.routers.users import router as users_router
 from app.storage.csv_store import CsvStore
@@ -33,6 +34,7 @@ app.include_router(holdings_router, prefix=settings.api_prefix)
 app.include_router(dashboard_router, prefix=settings.api_prefix)
 app.include_router(refresh_router, prefix=settings.api_prefix)
 app.include_router(prompts_router, prefix=settings.api_prefix)
+app.include_router(quotes_router, prefix=settings.api_prefix)
 
 if UI_ASSETS_DIR.exists():
     app.mount("/assets", StaticFiles(directory=UI_ASSETS_DIR), name="ui-assets")

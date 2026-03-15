@@ -88,6 +88,28 @@ class LatestPrice(BaseModel):
     as_of: datetime
 
 
+class QuoteSnapshot(BaseModel):
+    symbol: str
+    market: str
+    price: Decimal = Field(gt=0)
+    currency: str
+    as_of: datetime
+    stock_name: str | None = None
+    exchange_name: str | None = None
+    change: Decimal | None = None
+    change_percent: Decimal | None = None
+    open_price: Decimal | None = None
+    high_price: Decimal | None = None
+    low_price: Decimal | None = None
+    volume: int | None = None
+    market_cap: Decimal | None = None
+    fifty_two_week_high: Decimal | None = None
+    fifty_two_week_low: Decimal | None = None
+    per: Decimal | None = None
+    pbr: Decimal | None = None
+    source: str | None = None
+
+
 class EarningsEvent(BaseModel):
     id: int
     symbol: str

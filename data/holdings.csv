@@ -1,3 +1,0 @@
-﻿id,user_id,portfolio_id,symbol,name,market,currency,quantity,avg_price,created_at
-1,2,3,005930,삼성전자,KR,KRW,31,185800,2026-03-08T12:50:47+00:00
-2,2,3,012330,현대모비스,KR,KRW,16,442000,2026-03-08T12:53:13+00:00

@@ -3,6 +3,33 @@ import { useNavigate } from 'react-router';
 import { User } from 'lucide-react';
 import { findUser, saveUser, saveCurrentUser } from '../utils/storage';
 
+function formatBirthDateInput(value: string) {
+  const digits = value.replace(/\D/g, '').slice(0, 8);
+
+  if (digits.length <= 4) return digits;
+  if (digits.length <= 6) return `${digits.slice(0, 4)}/${digits.slice(4)}`;
+  return `${digits.slice(0, 4)}/${digits.slice(4, 6)}/${digits.slice(6)}`;
+}
+
+function toIsoBirthDate(value: string) {
+  if (!/^\d{4}\/\d{2}\/\d{2}$/.test(value)) {
+    return null;
+  }
+
+  const [year, month, day] = value.split('/').map(Number);
+  const date = new Date(year, month - 1, day);
+
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return null;
+  }
+
+  return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
 export function LoginPage() {
   const navigate = useNavigate();
   const [name, setName] = useState('');
@@ -15,20 +42,26 @@ export function LoginPage() {
     setError('');
 
     if (!name || !birthDate) {
-      setError('ÀÌ¸§°ú »ı³â¿ùÀÏÀ» ¸ğµÎ ÀÔ·ÂÇØ ÁÖ¼¼¿ä.');
+      setError('ì´ë¦„ê³¼ ìƒë…„ì›”ì¼ì„ ëª¨ë‘ ì…ë ¥í•´ ì£¼ì„¸ìš”.');
+      return;
+    }
+
+    const isoBirthDate = toIsoBirthDate(birthDate);
+    if (!isoBirthDate) {
+      setError('ìƒë…„ì›”ì¼ì€ yyyy/mm/dd í˜•ì‹ìœ¼ë¡œ ì…ë ¥í•´ ì£¼ì„¸ìš”.');
       return;
     }
 
     setIsSubmitting(true);
     try {
-      let user = await findUser(name, birthDate);
+      let user = await findUser(name, isoBirthDate);
       if (!user) {
-        user = await saveUser({ name, birthDate });
+        user = await saveUser({ name, birthDate: isoBirthDate });
       }
       saveCurrentUser(user);
       navigate('/');
     } catch (err) {
-      setError(err instanceof Error ? err.message : '·Î±×ÀÎ¿¡ ½ÇÆĞÇß½À´Ï´Ù.');
+      setError(err instanceof Error ? err.message : 'ë¡œê·¸ì¸ì— ì‹¤íŒ¨í–ˆìŠµë‹ˆë‹¤.');
     } finally {
       setIsSubmitting(false);
     }
@@ -45,16 +78,16 @@ export function LoginPage() {
           </div>
 
           <h2 className="text-2xl font-bold text-center text-gray-900 mb-2">
-            ÁÖ½Ä Æ÷Æ®Æú¸®¿À °ü¸®
+            ì£¼ì‹ í¬íŠ¸í´ë¦¬ì˜¤ ê´€ë¦¬
           </h2>
           <p className="text-center text-gray-600 mb-8">
-            ÀÌ¸§°ú »ı³â¿ùÀÏ·Î ·Î±×ÀÎÇØ ÁÖ¼¼¿ä
+            ì´ë¦„ê³¼ ìƒë…„ì›”ì¼ë¡œ ë¡œê·¸ì¸í•´ ì£¼ì„¸ìš”
           </p>
 
           <form onSubmit={handleSubmit} className="space-y-6">
             <div>
               <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-2">
-                ÀÌ¸§
+                ì´ë¦„
               </label>
               <input
                 type="text"
@@ -62,20 +95,24 @@ export function LoginPage() {
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-shadow"
-                placeholder="È«±æµ¿"
+                placeholder="í™ê¸¸ë™"
               />
             </div>
 
             <div>
               <label htmlFor="birthDate" className="block text-sm font-medium text-gray-700 mb-2">
-                »ı³â¿ùÀÏ
+                ìƒë…„ì›”ì¼
               </label>
               <input
-                type="date"
+                type="text"
                 id="birthDate"
                 value={birthDate}
-                onChange={(e) => setBirthDate(e.target.value)}
+                onChange={(e) => setBirthDate(formatBirthDateInput(e.target.value))}
+                inputMode="numeric"
+                maxLength={10}
+                autoComplete="bday"
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-shadow"
+                placeholder="yyyy/mm/dd"
               />
             </div>
 
@@ -90,12 +127,12 @@ export function LoginPage() {
               disabled={isSubmitting}
               className="w-full bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:opacity-60"
             >
-              {isSubmitting ? 'Ã³¸® Áß...' : '·Î±×ÀÎ'}
+              {isSubmitting ? 'ì²˜ë¦¬ ì¤‘...' : 'ë¡œê·¸ì¸'}
             </button>
           </form>
 
           <p className="mt-6 text-center text-sm text-gray-600">
-            Ã³À½ ¹æ¹®ÀÌ¸é ÀÚµ¿À¸·Î °èÁ¤ÀÌ »ı¼ºµË´Ï´Ù.
+            ì²˜ìŒ ë°©ë¬¸ì´ë©´ ìë™ìœ¼ë¡œ ê³„ì •ì´ ìƒì„±ë©ë‹ˆë‹¤.
           </p>
         </div>
       </div>
