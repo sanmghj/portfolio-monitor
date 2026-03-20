@@ -1,4 +1,4 @@
-import type { AIPrompt, HoldingInsights, NewsItem, Portfolio, PriceData, QuoteSnapshot, Stock, User } from '../types';
+import type { AIPrompt, FxRateSnapshot, HoldingInsights, MarketType, NewsItem, Portfolio, PriceData, QuoteSnapshot, SecuritySearchItem, Stock, User } from '../types';
 
 const API_PREFIX = '/api/v1';
 const KEYS = {
@@ -50,6 +50,23 @@ type ApiPrompt = {
   portfolio_id?: number | null;
   created_at: string;
   updated_at: string;
+};
+
+
+type ApiSecuritySearchItem = {
+  symbol: string;
+  name: string;
+  market: string;
+  exchange_name?: string | null;
+  currency?: string | null;
+  type?: string | null;
+};
+type ApiFxRateSnapshot = {
+  base_currency: string;
+  quote_currency: string;
+  rate: number | string;
+  as_of: string;
+  source?: string | null;
 };
 
 type ApiQuoteSnapshot = {
@@ -187,6 +204,27 @@ function mapPrompt(dto: ApiPrompt): AIPrompt {
     portfolioId: dto.portfolio_id ? String(dto.portfolio_id) : undefined,
     createdAt: dto.created_at,
     updatedAt: dto.updated_at,
+  };
+}
+
+
+function mapSecuritySearchItem(dto: ApiSecuritySearchItem): SecuritySearchItem {
+  return {
+    symbol: dto.symbol,
+    name: dto.name,
+    market: dto.market,
+    exchangeName: dto.exchange_name ?? undefined,
+    currency: dto.currency ?? undefined,
+    type: dto.type ?? undefined,
+  };
+}
+function mapFxRate(dto: ApiFxRateSnapshot): FxRateSnapshot {
+  return {
+    baseCurrency: dto.base_currency,
+    quoteCurrency: dto.quote_currency,
+    rate: toNumber(dto.rate),
+    asOf: dto.as_of,
+    source: dto.source ?? undefined,
   };
 }
 
@@ -328,6 +366,22 @@ export const saveStock = async (stock: Stock): Promise<Stock> => {
   return mapStock(saved);
 };
 
+
+export const searchSecurities = async (
+  query: string,
+  market: MarketType | 'ALL' = 'ALL',
+  limit = 10
+): Promise<SecuritySearchItem[]> => {
+  const params = new URLSearchParams({ q: query, market, limit: String(limit) });
+  const items = await api<ApiSecuritySearchItem[]>(`/securities/search?${params.toString()}`);
+  return items.map(mapSecuritySearchItem);
+};
+export const fetchFxRate = async (baseCurrency: string, quoteCurrency: string): Promise<FxRateSnapshot> => {
+  const params = new URLSearchParams({ base_currency: baseCurrency, quote_currency: quoteCurrency });
+  const snapshot = await api<ApiFxRateSnapshot>(`/quotes/fx-rate?${params.toString()}`);
+  return mapFxRate(snapshot);
+};
+
 export const fetchQuote = async (symbol: string, market: string): Promise<QuoteSnapshot> => {
   const params = new URLSearchParams({ symbol, market });
   const quote = await api<ApiQuoteSnapshot>(`/quotes?${params.toString()}`);
@@ -423,3 +477,7 @@ export const getPriceHistory = async (stockId: string): Promise<PriceData[]> => 
 };
 
 export const generateId = (): string => `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+
+
+
+

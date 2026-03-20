@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from app.schemas import EarningsEvent, Holding, LatestPrice, NewsHeadline, QuoteSnapshot
+from app.schemas import EarningsEvent, FxRateSnapshot, Holding, LatestPrice, NewsHeadline, QuoteSnapshot
 from app.services.providers import GoogleNewsProvider, NaverQuoteProvider, ProviderError, YahooFinanceProvider
 from app.storage.csv_store import CsvStore
 
@@ -18,11 +18,19 @@ class RefreshService:
     async def fetch_quote(self, symbol: str, market: str) -> QuoteSnapshot:
         normalized_symbol = symbol.upper().strip()
         normalized_market = market.upper().strip()
+
+        if normalized_market != 'KR':
+            latest_price = await self.market_fallback_provider.fetch_price(normalized_symbol, normalized_market)
+            return self._quote_from_latest_price(latest_price)
+
         try:
             return await self.market_provider.fetch_quote(normalized_symbol, normalized_market)
         except ProviderError:
             latest_price = await self.market_fallback_provider.fetch_price(normalized_symbol, normalized_market)
             return self._quote_from_latest_price(latest_price)
+
+    async def fetch_exchange_rate(self, base_currency: str, quote_currency: str) -> FxRateSnapshot:
+        return await self.market_fallback_provider.fetch_exchange_rate(base_currency, quote_currency)
 
     async def refresh_prices(self) -> dict[str, object]:
         holdings = self._unique_holdings(self.store.read_holdings())

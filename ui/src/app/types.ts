@@ -38,6 +38,23 @@ export interface Stock {
   priceAsOf?: string;
 }
 
+
+export interface SecuritySearchItem {
+  symbol: string;
+  name: string;
+  market: string;
+  exchangeName?: string;
+  currency?: string;
+  type?: string;
+}
+export interface FxRateSnapshot {
+  baseCurrency: string;
+  quoteCurrency: string;
+  rate: number;
+  asOf: string;
+  source?: string;
+}
+
 export interface QuoteSnapshot {
   symbol: string;
   market: string;
@@ -97,3 +114,4 @@ export interface HoldingInsights {
   }>;
   news: NewsItem[];
 }
+

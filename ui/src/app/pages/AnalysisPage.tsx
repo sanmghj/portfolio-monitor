@@ -1,106 +1,39 @@
 import { useEffect, useState } from 'react';
 import { Calendar, ExternalLink, Info, TrendingUp } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { fetchQuote, getHoldingInsights, getPriceHistory, getStocks, refreshHoldingInsights } from '../utils/storage';
-import type { PriceData, QuoteSnapshot, NewsItem, Stock } from '../types';
-
-const METRIC_HELP = [
-  { label: '거래량', description: '해당 기간 동안 거래된 주식 수량입니다. 거래가 얼마나 활발한지 볼 때 참고합니다.' },
-  { label: '52주 최고/최저', description: '최근 1년 동안 기록한 최고가와 최저가입니다. 현재 가격의 상대적 위치를 파악할 때 유용합니다.' },
-  { label: '시가총액', description: '현재 주가에 상장 주식 수를 곱한 기업 가치입니다. 화면에는 조/억 단위로 축약해 표시합니다.' },
-  { label: '시가/고가/저가', description: '당일 시작 가격, 가장 높았던 가격, 가장 낮았던 가격입니다. 하루 흐름을 볼 수 있습니다.' },
-  { label: 'PER', description: '주가수익비율입니다. 현재 주가가 이익 대비 어느 수준인지 볼 때 참고합니다.' },
-  { label: 'PBR', description: '주가순자산비율입니다. 현재 주가가 순자산 대비 어느 수준인지 볼 때 참고합니다.' },
-];
-
-function formatMetric(value?: number, suffix = '') {
-  if (value === undefined || value === null) return '-';
-  return `${value.toLocaleString()}${suffix}`;
-}
-
-function formatMarketCap(value?: number, currency = 'KRW') {
-  if (value === undefined || value === null) return '-';
-
-  if (currency === 'KRW') {
-    const trillion = 1_0000_0000_0000;
-    const hundredMillion = 1_0000_0000;
-
-    if (value >= trillion) {
-      const jo = Math.floor(value / trillion);
-      const eok = Math.round((value % trillion) / hundredMillion);
-      return eok > 0 ? `${jo}조 ${eok.toLocaleString()}억` : `${jo}조`;
-    }
-
-    if (value >= hundredMillion) {
-      return `${Math.round(value / hundredMillion).toLocaleString()}억`;
-    }
-  }
-
-  if (value >= 1_000_000_000_000) {
-    return `${(value / 1_000_000_000_000).toFixed(2)}T ${currency}`;
-  }
-  if (value >= 1_000_000_000) {
-    return `${(value / 1_000_000_000).toFixed(2)}B ${currency}`;
-  }
-  if (value >= 1_000_000) {
-    return `${(value / 1_000_000).toFixed(2)}M ${currency}`;
-  }
-  return `${value.toLocaleString()} ${currency}`;
-}
+import { getStocks } from '../utils/storage';
+import type { Stock } from '../types';
+import { METRIC_HELP } from '../constants/analysis';
+import { useHoldingAnalysis } from '../hooks/useHoldingAnalysis';
+import { formatMarketCap, formatMetric } from '../utils/formatters';
 
 export function AnalysisPage() {
   const [allStocks, setAllStocks] = useState<Stock[]>([]);
-  const [selectedStock, setSelectedStock] = useState<Stock | null>(null);
-  const [news, setNews] = useState<NewsItem[]>([]);
-  const [priceData, setPriceData] = useState<PriceData[]>([]);
-  const [quote, setQuote] = useState<QuoteSnapshot | null>(null);
-  const [error, setError] = useState('');
+  const [initialStock, setInitialStock] = useState<Stock | null>(null);
+  const [stocksError, setStocksError] = useState('');
+  const {
+    news,
+    priceData,
+    quote,
+    error: analysisError,
+    selectedStock,
+    setSelectedStock,
+  } = useHoldingAnalysis(initialStock);
 
   useEffect(() => {
     const loadStocks = async () => {
       try {
         const stocks = await getStocks();
         setAllStocks(stocks);
-        if (stocks.length > 0) {
-          setSelectedStock((current) => current ?? stocks[0]);
-        }
-        setError('');
+        setInitialStock((current) => current ?? stocks[0] ?? null);
+        setStocksError('');
       } catch (err) {
-        setError(err instanceof Error ? err.message : '종목 목록을 불러오지 못했습니다.');
+        setStocksError(err instanceof Error ? err.message : '종목 목록을 불러오지 못했습니다.');
       }
     };
 
     void loadStocks();
   }, []);
-
-  useEffect(() => {
-    const loadInsights = async () => {
-      if (!selectedStock) return;
-
-      try {
-        await refreshHoldingInsights(selectedStock.id);
-        const [insights, history, fetchedQuote] = await Promise.all([
-          getHoldingInsights(selectedStock.id),
-          getPriceHistory(selectedStock.id),
-          fetchQuote(selectedStock.symbol, selectedStock.market ?? 'KR'),
-        ]);
-        setNews(insights.news);
-        setPriceData(history);
-        setQuote(fetchedQuote);
-        if (insights.latestPrice !== null) {
-          setSelectedStock((current) =>
-            current ? { ...current, currentPrice: insights.latestPrice ?? current.currentPrice } : current
-          );
-        }
-        setError('');
-      } catch (err) {
-        setQuote(null);
-        setError(err instanceof Error ? err.message : '종목 분석 데이터를 불러오지 못했습니다.');
-      }
-    };
-
-    void loadInsights();
-  }, [selectedStock?.id]);
 
   if (allStocks.length === 0) {
     return (
@@ -114,6 +47,7 @@ export function AnalysisPage() {
     );
   }
 
+  const error = stocksError || analysisError;
   const profit = selectedStock
     ? (selectedStock.currentPrice - selectedStock.purchasePrice) * selectedStock.quantity
     : 0;
@@ -126,7 +60,7 @@ export function AnalysisPage() {
     <div>
       <div className="mb-8">
         <h1 className="mb-2 text-3xl font-bold text-gray-900">종목 분석</h1>
-        <p className="text-gray-600">보유 중인 종목의 가격 흐름, 뉴스, 참고 지표를 확인하세요</p>
+        <p className="text-gray-600">보유 중인 종목의 가격 흐름, 뉴스, 참고 지표를 확인해 보세요</p>
       </div>
 
       {error && (
@@ -171,7 +105,7 @@ export function AnalysisPage() {
                   <div className="text-right">
                     <div className="text-3xl font-bold text-gray-900">{selectedStock.currentPrice.toLocaleString()}원</div>
                     <div className={`text-lg font-medium ${isProfitable ? 'text-red-600' : 'text-blue-600'}`}>
-                      {isProfitable ? '+' : ''}{profit.toLocaleString()}원({isProfitable ? '+' : ''}{profitRate.toFixed(2)}%)
+                      {isProfitable ? '+' : ''}{profit.toLocaleString()}원 ({isProfitable ? '+' : ''}{profitRate.toFixed(2)}%)
                     </div>
                   </div>
                 </div>
@@ -187,7 +121,9 @@ export function AnalysisPage() {
                   </div>
                   <div>
                     <div className="mb-1 text-sm text-gray-600">평가 금액</div>
-                    <div className="font-semibold text-gray-900">{(selectedStock.currentPrice * selectedStock.quantity).toLocaleString()}원</div>
+                    <div className="font-semibold text-gray-900">
+                      {(selectedStock.currentPrice * selectedStock.quantity).toLocaleString()}원
+                    </div>
                   </div>
                 </div>
               </div>
@@ -221,7 +157,7 @@ export function AnalysisPage() {
                   </div>
 
                   <div className="mb-4 rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-gray-700">
-                    시가총액은 너무 긴 숫자 대신 조/억 단위로 요약해 보여줍니다. 자세한 값이 필요하면 브라우저 기본 툴팁에서 원본 숫자를 확인할 수 있습니다.
+                    시가총액은 너무 긴 숫자 대신 읽기 쉬운 단위로 요약해 보여줍니다. 자세한 값이 필요하면 브라우저 기본 툴팁에서 원래 숫자를 확인할 수 있습니다.
                   </div>
 
                   <div className="grid grid-cols-2 gap-4 md:grid-cols-4">

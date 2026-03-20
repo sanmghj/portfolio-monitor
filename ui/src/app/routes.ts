@@ -1,10 +1,13 @@
-import { createBrowserRouter } from 'react-router';
+import { createElement } from 'react';
+import { createBrowserRouter, Navigate } from 'react-router';
 import { Root } from './Root';
 import { LoginPage } from './pages/LoginPage';
 import { PortfoliosPage } from './pages/PortfoliosPage';
 import { PortfolioDetailPage } from './pages/PortfolioDetailPage';
-import { AnalysisPage } from './pages/AnalysisPage';
-import { PromptsPage } from './pages/PromptsPage';
+
+function RedirectToPortfolio() {
+  return createElement(Navigate, { to: '/', replace: true });
+}
 
 export const router = createBrowserRouter([
   {
@@ -25,11 +28,11 @@ export const router = createBrowserRouter([
       },
       {
         path: 'analysis',
-        Component: AnalysisPage,
+        Component: RedirectToPortfolio,
       },
       {
         path: 'prompts',
-        Component: PromptsPage,
+        Component: RedirectToPortfolio,
       },
     ],
   },

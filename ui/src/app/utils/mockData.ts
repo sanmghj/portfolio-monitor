@@ -1,27 +1,26 @@
 import { NewsItem, PriceData } from '../types';
 
-// 모의 뉴스 데이터 생성
 export const generateMockNews = (symbol: string): NewsItem[] => {
   const newsTemplates = [
     {
       title: `${symbol}, 분기 실적 예상 상회`,
-      summary: '시장 예상을 뛰어넘는 실적 발표로 주가 상승세 예상',
+      summary: '시장 예상치를 웃도는 실적 발표로 투자 심리가 개선되고 있습니다.',
       source: '경제일보',
     },
     {
       title: `${symbol} 신규 사업 진출 발표`,
-      summary: '새로운 성장 동력 확보로 중장기 전망 긍정적',
-      source: '투자뉴스',
+      summary: '새로운 성장 동력 확보 기대감으로 중장기 전망이 긍정적으로 평가됩니다.',
+      source: '비즈니스데일리',
     },
     {
-      title: `애널리스트 ${symbol} 목표가 상향`,
-      summary: '주요 증권사들이 목표가를 일제히 상향 조정',
-      source: '증권타임즈',
+      title: `애널리스트, ${symbol} 목표가 상향`,
+      summary: '주요 증권사들이 목표주가를 잇달아 높여 잡고 있습니다.',
+      source: '증권리포트',
     },
     {
-      title: `${symbol}, 배당 확대 방침 발표`,
-      summary: '주주환원 정책 강화로 투자 매력도 상승',
-      source: '재무신문',
+      title: `${symbol}, 주주환원 정책 발표`,
+      summary: '배당 및 자사주 정책 강화 기대감이 반영되고 있습니다.',
+      source: '머니뉴스',
     },
   ];
 
@@ -35,31 +34,28 @@ export const generateMockNews = (symbol: string): NewsItem[] => {
   }));
 };
 
-// 모의 주가 데이터 생성
 export const generateMockPriceData = (currentPrice: number): PriceData[] => {
   const data: PriceData[] = [];
   const days = 30;
-  
+
   for (let i = days; i >= 0; i--) {
     const date = new Date();
     date.setDate(date.getDate() - i);
-    
-    // 랜덤 변동 (-5% ~ +5%)
+
     const variation = 0.95 + Math.random() * 0.1;
     const price = currentPrice * variation;
-    const volume = Math.floor(1000000 + Math.random() * 5000000);
-    
+    const volume = Math.floor(1_000_000 + Math.random() * 5_000_000);
+
     data.push({
       date: date.toISOString().split('T')[0],
       price: Math.round(price),
       volume,
     });
   }
-  
+
   return data;
 };
 
-// 한국 주식 샘플
 export const koreanStockSamples = [
   { symbol: '005930', name: '삼성전자', price: 72000 },
   { symbol: '000660', name: 'SK하이닉스', price: 135000 },

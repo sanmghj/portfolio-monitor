@@ -9,7 +9,7 @@ from xml.etree import ElementTree
 
 import httpx
 
-from app.schemas import EarningsEvent, LatestPrice, NewsHeadline, QuoteSnapshot
+from app.schemas import EarningsEvent, FxRateSnapshot, LatestPrice, NewsHeadline, QuoteSnapshot, SecuritySearchItem
 
 
 class ProviderError(Exception):
@@ -350,6 +350,7 @@ class YahooFinanceProvider(BaseProvider):
     name = "yahoo_finance"
     chart_url = "https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
     summary_url = "https://query1.finance.yahoo.com/v10/finance/quoteSummary/{ticker}?modules=calendarEvents"
+    search_url = "https://query2.finance.yahoo.com/v1/finance/search"
 
     def _candidate_tickers(self, symbol: str, market: str) -> list[str]:
         normalized_symbol = symbol.upper().strip()
@@ -359,6 +360,137 @@ class YahooFinanceProvider(BaseProvider):
         if normalized_market == "KR":
             return [f"{normalized_symbol}.KS", f"{normalized_symbol}.KQ", normalized_symbol]
         return [normalized_symbol]
+
+
+    async def search_securities(self, query: str, market: str, limit: int = 10) -> list[SecuritySearchItem]:
+        normalized_query = query.strip()
+        normalized_market = market.upper().strip()
+        if not normalized_query:
+            return []
+
+        params = {
+            "q": normalized_query,
+            "quotesCount": max(limit * 2, 10),
+            "newsCount": 0,
+            "listsCount": 0,
+            "enableFuzzyQuery": True,
+            "enableYahooFinancePredefinedScreener": False,
+        }
+
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+            try:
+                response = await client.get(self.search_url, params=params)
+                response.raise_for_status()
+                payload = response.json()
+            except Exception as exc:  # noqa: BLE001
+                raise ProviderError(f"Failed to search securities for {query}/{market}: {exc}") from exc
+
+        quotes = payload.get("quotes", [])
+        items: list[SecuritySearchItem] = []
+        seen: set[tuple[str, str]] = set()
+
+        for quote in quotes:
+            quote_type = str(quote.get("quoteType") or "").upper()
+            if quote_type not in {"EQUITY", "ETF"}:
+                continue
+
+            symbol = str(quote.get("symbol") or "").upper().strip()
+            name = str(quote.get("shortname") or quote.get("longname") or quote.get("symbol") or "").strip()
+            if not symbol or not name:
+                continue
+
+            resolved_market = self._resolve_search_market(symbol, quote)
+            if normalized_market != "ALL" and resolved_market != normalized_market:
+                continue
+
+            normalized_symbol = self._normalize_search_symbol(symbol, resolved_market)
+            key = (normalized_symbol, resolved_market)
+            if key in seen:
+                continue
+            seen.add(key)
+
+            items.append(
+                SecuritySearchItem(
+                    symbol=normalized_symbol,
+                    name=name,
+                    market=resolved_market,
+                    exchange_name=quote.get("exchDisp") or quote.get("exchange") or quote.get("exchangeDisplay"),
+                    currency=quote.get("currency"),
+                    type=quote_type.lower(),
+                )
+            )
+            if len(items) >= limit:
+                break
+
+        return items
+
+    def _resolve_search_market(self, symbol: str, payload: dict) -> str:
+        normalized_symbol = symbol.upper()
+        exchange = str(payload.get("exchange") or "").upper()
+        if normalized_symbol.endswith(".KS") or normalized_symbol.endswith(".KQ"):
+            return "KR"
+        if exchange in {"KSC", "KOE", "KOS", "KON"}:
+            return "KR"
+        return "US"
+
+    def _normalize_search_symbol(self, symbol: str, market: str) -> str:
+        normalized_symbol = symbol.upper().strip()
+        if market == "KR" and normalized_symbol.endswith((".KS", ".KQ")):
+            return normalized_symbol[:-3]
+        return normalized_symbol
+    async def fetch_exchange_rate(self, base_currency: str, quote_currency: str) -> FxRateSnapshot:
+        normalized_base = base_currency.upper().strip()
+        normalized_quote = quote_currency.upper().strip()
+        if normalized_base == normalized_quote:
+            return FxRateSnapshot(
+                base_currency=normalized_base,
+                quote_currency=normalized_quote,
+                rate=Decimal('1'),
+                as_of=datetime.now(UTC).replace(microsecond=0),
+                source=self.name,
+            )
+
+        ticker_candidates = self._currency_pair_tickers(normalized_base, normalized_quote)
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+            last_error: Exception | None = None
+            for ticker, invert in ticker_candidates:
+                try:
+                    response = await client.get(self.chart_url.format(ticker=ticker))
+                    response.raise_for_status()
+                    payload = response.json()
+                    result = payload.get('chart', {}).get('result', [])
+                    if not result:
+                        continue
+                    meta = result[0].get('meta', {})
+                    price = meta.get('regularMarketPrice') or meta.get('previousClose')
+                    market_time = meta.get('regularMarketTime')
+                    if price is None or not market_time:
+                        continue
+
+                    rate = Decimal(str(price))
+                    if invert:
+                        rate = Decimal('1') / rate
+
+                    return FxRateSnapshot(
+                        base_currency=normalized_base,
+                        quote_currency=normalized_quote,
+                        rate=rate,
+                        as_of=datetime.fromtimestamp(int(market_time), tz=UTC),
+                        source=self.name,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    last_error = exc
+
+        raise ProviderError(
+            f'Failed to fetch exchange rate for {normalized_base}/{normalized_quote}: {last_error}'
+        )
+
+    def _currency_pair_tickers(self, base_currency: str, quote_currency: str) -> list[tuple[str, bool]]:
+        if base_currency == 'USD' and quote_currency == 'KRW':
+            return [('KRW=X', False), ('USDKRW=X', False)]
+        if base_currency == 'KRW' and quote_currency == 'USD':
+            return [('KRW=X', True), ('USDKRW=X', True)]
+        return [(f'{base_currency}{quote_currency}=X', False)]
 
     async def fetch_price(self, symbol: str, market: str) -> LatestPrice:
         async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
@@ -467,3 +599,5 @@ class GoogleNewsProvider(BaseProvider):
                 )
             )
         return headlines
+
+

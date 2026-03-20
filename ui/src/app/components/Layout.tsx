@@ -1,13 +1,7 @@
 import { ReactNode } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router';
-import { 
-  LayoutDashboard, 
-  TrendingUp, 
-  MessageSquare, 
-  LogOut,
-  Briefcase 
-} from 'lucide-react';
-import { getCurrentUser, clearCurrentUser } from '../utils/storage';
+import { Briefcase, LayoutDashboard, LogOut } from 'lucide-react';
+import { clearCurrentUser, getCurrentUser } from '../utils/storage';
 
 interface LayoutProps {
   children: ReactNode;
@@ -23,59 +17,52 @@ export function Layout({ children }: LayoutProps) {
     navigate('/login');
   };
 
-  const navItems = [
-    { path: '/', label: '포트폴리오', icon: Briefcase },
-    { path: '/analysis', label: '종목 분석', icon: TrendingUp },
-    { path: '/prompts', label: 'AI 프롬프트', icon: MessageSquare },
-  ];
+  const navItems = [{ path: '/', label: '포트폴리오', icon: Briefcase }];
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* 헤더 */}
-      <header className="bg-white border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-16">
-            <div className="flex items-center gap-2">
-              <LayoutDashboard className="w-6 h-6 text-blue-600" />
-              <h1 className="text-xl font-bold text-gray-900">주식 포트폴리오 관리</h1>
+      <header className="border-b border-gray-200 bg-white">
+        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
+          <Link to="/" className="flex items-center gap-2">
+            <LayoutDashboard className="h-6 w-6 text-blue-600" />
+            <h1 className="text-xl font-bold text-gray-900">주식 포트폴리오 관리</h1>
+          </Link>
+
+          {user && (
+            <div className="flex items-center gap-4">
+              <span className="text-sm text-gray-600">{user.name}님</span>
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="flex items-center gap-2 rounded-lg px-4 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-100"
+              >
+                <LogOut className="h-4 w-4" />
+                로그아웃
+              </button>
             </div>
-            
-            {user && (
-              <div className="flex items-center gap-4">
-                <span className="text-sm text-gray-600">{user.name}님</span>
-                <button
-                  onClick={handleLogout}
-                  className="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
-                >
-                  <LogOut className="w-4 h-4" />
-                  로그아웃
-                </button>
-              </div>
-            )}
-          </div>
+          )}
         </div>
       </header>
 
-      {/* 네비게이션 */}
       {user && (
-        <nav className="bg-white border-b border-gray-200">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <nav className="border-b border-gray-200 bg-white">
+          <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
             <div className="flex gap-1">
               {navItems.map((item) => {
                 const Icon = item.icon;
                 const isActive = location.pathname === item.path;
-                
+
                 return (
                   <Link
                     key={item.path}
                     to={item.path}
-                    className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+                    className={`flex items-center gap-2 border-b-2 px-4 py-3 text-sm font-medium transition-colors ${
                       isActive
                         ? 'border-blue-600 text-blue-600'
-                        : 'border-transparent text-gray-600 hover:text-gray-900 hover:border-gray-300'
+                        : 'border-transparent text-gray-600 hover:border-gray-300 hover:text-gray-900'
                     }`}
                   >
-                    <Icon className="w-4 h-4" />
+                    <Icon className="h-4 w-4" />
                     {item.label}
                   </Link>
                 );
@@ -85,10 +72,7 @@ export function Layout({ children }: LayoutProps) {
         </nav>
       )}
 
-      {/* 메인 컨텐츠 */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {children}
-      </main>
+      <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">{children}</main>
     </div>
   );
 }

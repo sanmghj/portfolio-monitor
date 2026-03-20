@@ -110,6 +110,22 @@ class QuoteSnapshot(BaseModel):
     source: str | None = None
 
 
+class FxRateSnapshot(BaseModel):
+    base_currency: str
+    quote_currency: str
+    rate: Decimal = Field(gt=0)
+    as_of: datetime
+    source: str | None = None
+
+
+class SecuritySearchItem(BaseModel):
+    symbol: str
+    name: str
+    market: str
+    exchange_name: str | None = None
+    currency: str | None = None
+    type: str | None = None
+
 class EarningsEvent(BaseModel):
     id: int
     symbol: str
@@ -205,3 +221,5 @@ class Prompt(PromptBase):
     user_id: int
     created_at: datetime
     updated_at: datetime
+
+
